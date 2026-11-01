@@ -1067,16 +1067,79 @@ function pcDelta(key, now, before) {
   return '';
 }
 
+// ---------- 총공세 3일차: 연결과 기록(네트워크 구성·Windows 기록 건수·SDP 서버 연결) ----------
+// 네트워크·기록 건수는 제공 PC 조회(같은 /api/pc/status 응답)의 값을 읽기만 합니다.
+// SDP 연결은 PC 조회와 다른 응답(/api/me)의 서버 연결 상태(meta.mode)로 따로 판단해, PC 조회 성공과 섞지 않습니다.
+const SDP_PATH = '/api/me';
+const LOCAL_FAILURE_CODES = new Set(['NETWORK_ERROR', 'TIMEOUT', 'CANCELLED', 'INVALID_RESPONSE', 'NOT_ALLOWED', 'REQUEST_FAILED']);
+const PC_CONN = Object.freeze([['network', '네트워크 구성'], ['events', 'Windows 기록 경고·오류']]);
+const isCount = n => Number.isInteger(n) && n >= 0;
+
+function readPcConn(key, metric) {
+  if (!metric || metric.state !== 'ok') {
+    const reason = textOf(metric && metric.reason) || 'invalid_response';
+    return { ok: false, reason, text: '이번 조회에서 읽지 못함', note: PC_REASONS[reason] || PC_REASONS.invalid_response };
+  }
+  if (key === 'network' && isCount(metric.interfaceCount) && isCount(metric.ipv4Count)) {
+    return {
+      ok: true, interfaces: metric.interfaceCount, ipv4: metric.ipv4Count,
+      text: metric.interfaceCount ? `연결된 어댑터 ${metric.interfaceCount}개 · IPv4 주소 ${metric.ipv4Count}개` : '외부와 연결된 어댑터 없음 (0개)',
+      note: '개수만 읽고 IP 주소는 받지 않습니다. 가상 어댑터(VMware 등)도 셉니다. 인터넷 연결 여부나 연결 품질을 뜻하지 않습니다.',
+      caution: metric.interfaceCount === 0,
+    };
+  }
+  const since = metric && typeof metric.since === 'string' ? Date.parse(metric.since) : NaN;
+  if (key === 'events' && isCount(metric.warningCount) && isCount(metric.errorCount) && typeof metric.truncated === 'boolean' && Number.isFinite(since)) {
+    return {
+      ok: true, warning: metric.warningCount, error: metric.errorCount, truncated: metric.truncated, since,
+      text: `경고 ${metric.warningCount.toLocaleString("ko-KR")}건 · 오류 ${metric.errorCount.toLocaleString("ko-KR")}건${metric.truncated ? ` (${(isCount(metric.sampleLimit) ? metric.sampleLimit : 5000).toLocaleString("ko-KR")}건이 넘어 최근 것만 셈)` : ''}`,
+      note: `최근 24시간(${new Date(since).toLocaleString('ko-KR')}부터) System·Application 기록의 경고·오류 건수입니다. 이 건수는 침해나 공격 탐지 결과가 아닙니다.`,
+    };
+  }
+  return { ok: false, reason: 'invalid_response', text: '이번 조회에서 읽지 못함', note: PC_REASONS.invalid_response };
+}
+
+function pcConnDelta(key, now, before) {
+  if (!before) return '직전 조회 없음 (첫 조회)';
+  if (!now.ok || !before.ok) return '직전 대비 비교 불가 (어느 한쪽이 확인 불가)';
+  if (key === 'network') return now.interfaces === before.interfaces && now.ipv4 === before.ipv4 ? '직전과 같음' : `직전과 달라짐 (어댑터 ${before.interfaces}→${now.interfaces}개, IPv4 ${before.ipv4}→${now.ipv4}개)`;
+  if (key === 'events') {
+    const d = n => (n === 0 ? '변화 없음' : `${n > 0 ? '+' : '−'}${Math.abs(n)}건`);
+    return `직전 대비 경고 ${d(now.warning - before.warning)} · 오류 ${d(now.error - before.error)} (24시간 범위가 함께 움직이므로 새로 생긴 건수와 같지 않음)`;
+  }
+  return '';
+}
+
+// SDP 서버 연결 상태. 서버가 직접 보낸 연결 상태(mode)와 확인 시각이 있을 때만 연결·미연결을 말합니다.
+function readSdp(result) {
+  const meta = result && result.meta && typeof result.meta === 'object' ? result.meta : null;
+  const checkedAt = meta && typeof meta.checkedAt === 'string' && Number.isFinite(Date.parse(meta.checkedAt)) ? Date.parse(meta.checkedAt) : null;
+  const code = safeCode(result && result.error && result.error.code) || null;
+  if (!result || (result.ok !== true && (!code || LOCAL_FAILURE_CODES.has(code))) || checkedAt === null) {
+    return { kind: 'unknown', label: '확인 불가', text: `SDP 연결 여부를 확인하지 못했습니다${code ? ` (${code})` : ''}.`, note: '앱 서버가 응답하지 않았거나 응답을 확인할 수 없습니다. 미연결로 단정하지 않습니다. 「다시 조회」를 누르세요.', checkedAt };
+  }
+  if (meta.mode === 'demo') return { kind: 'off', label: 'SDP 미연결', text: '예제 모드로 실행 중이라 SDP 서버에 연결하지 않았습니다.', note: '기기·세션·알림 칸은 예제 자료입니다. PC 조회 결과(위 카드)는 이와 별개인 이 PC의 실측입니다.', checkedAt };
+  if (meta.mode === 'disconnected') return { kind: 'off', label: 'SDP 미연결', text: `앱 서버가 SDP 서버 연결 없이 실행 중입니다${code ? ` (${code})` : ''}.`, note: 'PC 조회 결과(위 카드)는 SDP 연결과 별개인 이 PC의 실측입니다.', checkedAt };
+  if (meta.mode === 'connected' && result.ok === true) return { kind: 'on', label: 'SDP 연결됨', text: '앱 서버가 SDP 서버 연결 설정으로 실행 중이며, 이번 확인에서 내 정보 응답을 받았습니다.', note: '연결 상태일 뿐 접근 허용이나 안전 판정이 아닙니다.', checkedAt };
+  if (meta.mode === 'connected') return { kind: 'unknown', label: '확인 불가', text: `SDP 서버 연결 설정은 있지만 이번 확인에 실패했습니다 (${code || 'UNKNOWN'}).`, note: '연결됨으로 표시하지 않습니다. 잠시 뒤 「다시 조회」를 누르세요.', checkedAt };
+  return { kind: 'unknown', label: '확인 불가', text: '서버가 알 수 없는 연결 상태를 보냈습니다.', note: '미연결로 단정하지 않습니다.', checkedAt };
+}
+
 function createPcDashboard({ api, onChange }) {
-  const state = { status: 'idle', error: null, history: [], focusAfter: false };
+  const state = { status: 'idle', error: null, history: [], focusAfter: false, sdp: null };
   const hasApi = !!(api && typeof api.get === 'function');
   const redraw = () => { if (typeof onChange === 'function') onChange(); };
 
   async function refresh() {
     if (state.status === 'loading' || !hasApi) return;
     state.status = 'loading'; state.error = null; state.focusAfter = true; redraw();
-    let result;
-    try { result = await api.get(PC_PATH); } catch { result = { ok: false, error: { code: 'REQUEST_FAILED', message: '조회 요청을 처리하지 못했습니다.' } }; }
+    const failed = { ok: false, error: { code: 'REQUEST_FAILED', message: '조회 요청을 처리하지 못했습니다.' } };
+    // PC 조회와 SDP 연결 확인은 서로 다른 요청이며, 한쪽이 실패해도 다른 쪽은 따로 표시합니다.
+    const [result, sdpResult] = await Promise.all([
+      Promise.resolve().then(() => api.get(PC_PATH)).catch(() => failed),
+      Promise.resolve().then(() => api.get(SDP_PATH)).catch(() => failed),
+    ]);
+    state.sdp = readSdp(sdpResult);
     const data = result && result.ok === true ? result.data : null;
     const measured = data && typeof data.measuredAt === 'string' ? Date.parse(data.measuredAt) : NaN;
     if (!data || data.schema !== PC_SCHEMA || data.source !== 'local-pc' || !Number.isFinite(measured) || !data.metrics || typeof data.metrics !== 'object') {
@@ -1088,7 +1151,8 @@ function createPcDashboard({ api, onChange }) {
     } else {
       const receivedAt = Date.now();
       const metrics = Object.fromEntries(PC_CARDS.map(([key]) => [key, readPcMetric(key, data.metrics[key])]));
-      state.history.unshift({ measuredAt: measured, receivedAt, stale: Math.abs(receivedAt - measured) > PC_STALE_MS, metrics });
+      const conn = Object.fromEntries(PC_CONN.map(([key]) => [key, readPcConn(key, data.metrics[key])]));
+      state.history.unshift({ measuredAt: measured, receivedAt, stale: Math.abs(receivedAt - measured) > PC_STALE_MS, metrics, conn, sdp: state.sdp });
       state.history.length = Math.min(state.history.length, PC_HISTORY_LIMIT);
       state.status = 'ok';
     }
@@ -1099,7 +1163,7 @@ function createPcDashboard({ api, onChange }) {
     const root = node('section', null, { className: 'student-pc-dashboard', 'data-student-pc': state.status });
     root.append(
       node('h3', '내 PC 관제 대시보드'),
-      node('p', '측정은 제공 기능(위쪽 「내 PC 상태」 카드와 같은 실측, 일반 권한으로 읽기만 함)입니다. 학생 구현은 상태 카드 요약, 직전 조회 대비 변화, 최근 조회 목록, 확인 불가·오래됨·실패 구분입니다.', { className: 'muted' }),
+      node('p', '측정은 제공 기능(위쪽 「내 PC 상태」 카드와 같은 실측, 일반 권한으로 읽기만 함)입니다. 학생 구현은 상태 카드 요약, 직전 조회 대비 변화, 연결과 기록(네트워크·기록 건수·SDP 연결 구분), 최근 조회 목록, 확인 불가·오래됨·실패 구분입니다.', { className: 'muted' }),
       node('p', '값의 종류: 실측(잰 시각 표시) · 확인 불가(이유 표시) · 오래됨(잰 지 60초 넘음). 이 대시보드에는 예시 값을 쓰지 않습니다.', { className: 'muted' }),
     );
     const button = node('button', state.status === 'loading' ? '읽는 중…' : '다시 조회', { type: 'button', className: 'btn', 'data-student-pc-refresh': 'true', 'aria-label': '내 PC 다시 조회' });
@@ -1143,6 +1207,7 @@ function createPcDashboard({ api, onChange }) {
       }
       root.append(grid);
     }
+    if (hasApi && (state.status === 'ok' || state.status === 'error')) root.append(renderConnection(state.status === 'ok' ? latest : null, previous));
 
     // 최근 조회 목록(추이 비교의 근거). 실패·조회 중에도 과거 기록으로만 보여 줍니다.
     root.append(node('h4', `최근 조회 (최신순, 최대 ${PC_HISTORY_LIMIT}회)`));
@@ -1151,9 +1216,9 @@ function createPcDashboard({ api, onChange }) {
     } else {
       const table = node('table', null, { className: 'student-pc-history' });
       Object.assign(table.style, { width: '100%', borderCollapse: 'collapse', textAlign: 'left' });
-      table.append(node('caption', '앱을 켠 뒤의 조회만 앱 메모리에 보관하며, 새로고침하면 비워집니다. 저장·전송하지 않습니다.'));
+      table.append(node('caption', '앱을 켠 뒤의 조회만 앱 메모리에 보관하며, 새로고침하면 비워집니다. 저장·전송하지 않습니다. 기록 경고·오류는 「경고 / 오류」 건수(+는 5,000건 넘음)이며 침해 판정이 아닙니다.'));
       const head = node('tr');
-      for (const label of ['잰 시각', 'CPU', '메모리 사용', '디스크 여유', '방화벽']) head.append(node('th', label, { scope: 'col' }));
+      for (const label of ['잰 시각', 'CPU', '메모리 사용', '디스크 여유', '방화벽', '기록 경고·오류', 'SDP']) head.append(node('th', label, { scope: 'col' }));
       const thead = node('thead'); thead.append(head);
       const tbody = node('tbody');
       state.history.forEach((entry, index) => {
@@ -1163,12 +1228,44 @@ function createPcDashboard({ api, onChange }) {
           const info = entry.metrics[key];
           tr.append(node('td', !info.ok ? '확인 불가' : key === 'cpu' ? `${info.number.toFixed(1)} %` : key === 'firewall' ? (info.caution ? '꺼진 프로필 있음' : '모두 켜짐') : `${info.number.toFixed(2)} GB`));
         }
+        const ev = entry.conn && entry.conn.events;
+        tr.append(node('td', ev && ev.ok ? `${ev.warning} / ${ev.error}${ev.truncated ? '+' : ''}` : '확인 불가'), node('td', entry.sdp ? entry.sdp.label : '확인 불가'));
         tbody.append(tr);
       });
       table.append(thead, tbody);
       root.append(table);
     }
     return root;
+  }
+
+  // 3일차 「연결과 기록」: PC 실측 두 줄과 SDP 연결 한 줄을 출처별로 나눠 보여 줍니다.
+  function renderConnection(latest, previous) {
+    const box = node('section', null, { className: 'student-pc-connection', 'aria-label': '연결과 기록' });
+    Object.assign(box.style, { border: '1px solid #d0d7de', borderRadius: '8px', padding: '8px', margin: '8px 0' });
+    box.append(node('h4', '연결과 기록'), node('p', '모두 읽기만 합니다. 방화벽·보안 설정을 바꾸거나 관리자 권한을 요청하지 않습니다.', { className: 'muted' }));
+    const list = node('dl', null, { className: 'kv' });
+    for (const [key, title] of PC_CONN) {
+      const info = latest ? latest.conn[key] : null;
+      const label = !info || !info.ok ? '확인 불가' : latest.stale ? '오래됨' : info.caution ? '주의 · 실측' : '실측';
+      const dd = node('dd', null, { 'data-student-pc-conn': key, 'data-state': !info || !info.ok ? 'unavailable' : 'measured' });
+      dd.append(node('p', `${label} · ${info ? info.text : '이번 PC 조회가 실패해 읽지 못함'}`, { className: `state ${!info || !info.ok ? 'state-empty' : info.caution ? 'state-error' : 'state-ok'}` }));
+      if (!info) dd.append(node('p', '이유: 위의 「이번 조회 실패」를 확인하세요. 이전 값은 현재 상태로 표시하지 않습니다.', { className: 'muted' }));
+      else if (!info.ok) dd.append(node('p', `이유: ${info.note}`, { className: 'muted' }));
+      else dd.append(node('p', `잰 시각 ${clockText(latest.measuredAt)} · 출처: 이 PC(local-pc)`, { className: 'muted' }), node('p', info.note, { className: 'muted' }));
+      if (key === 'events' && !(info && info.ok)) dd.append(node('p', '이 항목은 읽더라도 침해나 공격 탐지 결과가 아닙니다.', { className: 'muted' }));
+      if (info) dd.append(node('p', pcConnDelta(key, info, previous && previous.conn && previous.conn[key]), { 'data-student-pc-conn-delta': key }));
+      list.append(node('dt', title), dd);
+    }
+    const sdp = state.sdp;
+    const sdpDd = node('dd', null, { 'data-student-sdp': sdp ? sdp.kind : 'unknown' });
+    sdpDd.append(
+      node('p', `${sdp ? sdp.label : '확인 불가'} · ${sdp ? sdp.text : '아직 확인하지 않았습니다.'}`, { className: `state ${sdp && sdp.kind === 'on' ? 'state-ok' : 'state-empty'}` }),
+      node('p', `${sdp && sdp.checkedAt ? `확인 시각 ${clockText(sdp.checkedAt)} · ` : ''}출처: 앱 서버의 연결 상태(내 정보 응답) — PC 조회 결과와 별개입니다.`, { className: 'muted' }),
+    );
+    if (sdp) sdpDd.append(node('p', sdp.note, { className: 'muted' }));
+    list.append(node('dt', 'SDP 서버 연결'), sdpDd);
+    box.append(list);
+    return box;
   }
 
   // 다시 그린 뒤에도 키보드 포커스를 「다시 조회」 버튼에 둡니다.
