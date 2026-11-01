@@ -1125,14 +1125,50 @@ function readSdp(result) {
   return { kind: 'unknown', label: '확인 불가', text: '서버가 알 수 없는 연결 상태를 보냈습니다.', note: '미연결로 단정하지 않습니다.', checkedAt };
 }
 
+// ---------- 총공세 추가: 한눈 요약·점검 결과 복사 ----------
+// 한 번의 조회를 항목별 상태로 분류합니다. 4일차 「최근 기록」 필터(전체/주의/확인 불가)도 이 기준을 그대로 씁니다.
+//   caution(주의): 기준을 넘은 실측값 / unavailable(확인 불가): 이유가 있는 미측정 / stale(오래됨) / measured(실측 정상)
+// Windows 기록 경고·오류 건수는 침해 판정이 아니므로 주의로 세지 않습니다.
+const PC_ITEMS = Object.freeze([...PC_CARDS, ...PC_CONN]);
+function classifyPcEntry(entry) {
+  return PC_ITEMS.map(([key, title]) => {
+    const info = key in entry.metrics ? entry.metrics[key] : entry.conn && entry.conn[key];
+    const kind = !info || !info.ok ? 'unavailable' : entry.stale ? 'stale' : info.caution ? 'caution' : 'measured';
+    return { key, title, kind, info };
+  });
+}
+const PC_KIND_LABEL = Object.freeze({ caution: '주의', unavailable: '확인 불가', stale: '오래됨', measured: '실측' });
+
+// 담당자에게 넘길 점검 결과 글. 제공 응답에 있는 값·이유만 담고, IP 주소·컴퓨터 이름·사용자 이름·토큰은 담지 않습니다.
+function buildPcReport(entry, previous, sdp) {
+  const at = new Date(entry.measuredAt);
+  const lines = [
+    '[케셰브 내 PC 점검 결과]',
+    `잰 시각: ${at.toLocaleString('ko-KR')} (${at.toISOString()}) · 출처: 이 PC(local-pc), 일반 권한 읽기 전용${entry.stale ? ' · 오래됨(잰 지 60초 넘음)' : ''}`,
+  ];
+  const items = classifyPcEntry(entry);
+  const count = kind => items.filter(item => item.kind === kind).length;
+  lines.push(`요약: 주의 ${count('caution')} · 확인 불가 ${count('unavailable')} · 오래됨 ${count('stale')} · 실측 ${count('measured')}`);
+  for (const item of items) {
+    const before = previous ? (item.key in previous.metrics ? previous.metrics[item.key] : previous.conn && previous.conn[item.key]) : null;
+    const delta = item.key in entry.metrics ? pcDelta(item.key, item.info, before) : pcConnDelta(item.key, item.info, before);
+    const detail = item.info && item.info.ok ? item.info.text : `이번 조회에서 읽지 못함 — 이유: ${item.info ? item.info.note : PC_REASONS.invalid_response}`;
+    lines.push(`- ${item.title}: [${PC_KIND_LABEL[item.kind]}] ${detail} · ${delta}`);
+  }
+  lines.push(`- SDP 서버 연결: [${sdp ? sdp.label : '확인 불가'}] ${sdp ? sdp.text : '확인하지 못했습니다.'} (PC 조회 결과와 별개)`);
+  lines.push('참고: Windows 기록 경고·오류 건수는 침해나 공격 탐지 결과가 아닙니다. 앱은 설정을 바꾸지 않았습니다.');
+  lines.push('이 글에는 IP 주소·컴퓨터 이름·사용자 이름·비밀번호·토큰이 들어 있지 않습니다.');
+  return lines.join('\n');
+}
+
 function createPcDashboard({ api, onChange }) {
-  const state = { status: 'idle', error: null, history: [], focusAfter: false, sdp: null };
+  const state = { status: 'idle', error: null, history: [], focusAfter: false, sdp: null, copy: null, focusCopy: false };
   const hasApi = !!(api && typeof api.get === 'function');
   const redraw = () => { if (typeof onChange === 'function') onChange(); };
 
   async function refresh() {
     if (state.status === 'loading' || !hasApi) return;
-    state.status = 'loading'; state.error = null; state.focusAfter = true; redraw();
+    state.status = 'loading'; state.error = null; state.focusAfter = true; state.copy = null; redraw();
     const failed = { ok: false, error: { code: 'REQUEST_FAILED', message: '조회 요청을 처리하지 못했습니다.' } };
     // PC 조회와 SDP 연결 확인은 서로 다른 요청이며, 한쪽이 실패해도 다른 쪽은 따로 표시합니다.
     const [result, sdpResult] = await Promise.all([
@@ -1170,6 +1206,7 @@ function createPcDashboard({ api, onChange }) {
     button.disabled = state.status === 'loading' || !hasApi;
     button.addEventListener('click', () => { void refresh(); });
     root.append(button);
+    if (hasApi) root.append(...renderSummaryAndCopy());
 
     const latest = state.history[0] || null;
     const previous = state.history[1] || null;
@@ -1193,7 +1230,7 @@ function createPcDashboard({ api, onChange }) {
         { className: `state ${latest.stale ? 'state-empty' : 'state-ok'}`, role: 'status', 'data-student-pc-measured-at': new Date(latest.measuredAt).toISOString() }));
       for (const [key, title] of PC_CARDS) {
         const info = latest.metrics[key];
-        const card = node('article', null, { className: 'student-pc-card', 'data-student-pc-metric': key, 'data-state': info.ok ? (latest.stale ? 'stale' : 'measured') : 'unavailable' });
+        const card = node('article', null, { className: 'student-pc-card', 'data-student-pc-metric': key, 'data-state': info.ok ? (latest.stale ? 'stale' : 'measured') : 'unavailable', tabindex: '-1' });
         Object.assign(card.style, { border: '1px solid #d0d7de', borderRadius: '8px', padding: '8px' });
         const badge = !info.ok ? '확인 불가' : latest.stale ? '오래됨' : info.caution ? '주의 · 실측' : '실측';
         card.append(
@@ -1238,6 +1275,82 @@ function createPcDashboard({ api, onChange }) {
     return root;
   }
 
+  // 한눈 요약 줄 + 점검 결과 복사. 이번 조회가 성공했을 때만 요약하고, 실패·조회 중에는 이전 값으로 요약하지 않습니다.
+  function renderSummaryAndCopy() {
+    const latest = state.status === 'ok' ? state.history[0] : null;
+    const parts = [];
+    const summary = node('div', null, { className: 'student-pc-summary', role: 'status', 'aria-label': '한눈 요약' });
+    Object.assign(summary.style, { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', margin: '8px 0' });
+    if (!latest) {
+      summary.setAttribute('data-student-pc-summary', 'none');
+      summary.append(node('span', state.status === 'error' ? '한눈 요약: 이번 조회 실패 — 요약 없음 (이전 값으로 요약하지 않습니다)'
+        : state.status === 'loading' ? '한눈 요약: 읽는 중…' : '한눈 요약: 아직 조회하지 않았습니다.', { className: 'muted' }));
+    } else {
+      const items = classifyPcEntry(latest);
+      const count = kind => items.filter(item => item.kind === kind).length;
+      summary.setAttribute('data-student-pc-summary', `caution:${count('caution')},unavailable:${count('unavailable')},stale:${count('stale')},measured:${count('measured')}`);
+      summary.append(node('strong', '한눈 요약'));
+      for (const kind of ['caution', 'unavailable', 'stale', 'measured']) {
+        const hits = items.filter(item => item.kind === kind);
+        if (kind === 'stale' && !hits.length) continue;
+        const group = node('span', `${PC_KIND_LABEL[kind]} ${hits.length}`, { className: `state ${kind === 'caution' && hits.length ? 'state-error' : kind === 'measured' ? 'state-ok' : 'state-empty'}`, 'data-student-pc-summary-kind': kind });
+        Object.assign(group.style, { padding: '2px 6px' });
+        if (kind !== 'measured') for (const item of hits) {
+          // 항목 이름을 누르면(키보드 Enter·Space 포함) 해당 카드·줄로 포커스를 옮깁니다.
+          const jump = node('button', item.title, { type: 'button', className: 'btn', 'data-student-pc-jump': item.key, 'aria-label': `${item.title} 항목으로 이동` });
+          Object.assign(jump.style, { marginLeft: '4px', padding: '0 6px' });
+          jump.addEventListener('click', () => {
+            const target = document.querySelector(`[data-student-pc-metric="${item.key}"], [data-student-pc-conn="${item.key}"]`);
+            if (target) { target.focus(); if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' }); }
+          });
+          group.append(jump);
+        }
+        summary.append(group);
+      }
+      const sdpTag = node('span', `${state.sdp ? state.sdp.label : '확인 불가'} (PC 조회와 별개)`, { className: `state ${state.sdp && state.sdp.kind === 'on' ? 'state-ok' : 'state-empty'}`, 'data-student-pc-summary-sdp': state.sdp ? state.sdp.kind : 'unknown' });
+      Object.assign(sdpTag.style, { padding: '2px 6px' });
+      summary.append(sdpTag, node('span', '· 기록 경고·오류 건수는 침해 판정이 아니어서 주의로 세지 않습니다.', { className: 'muted' }));
+    }
+    parts.push(summary);
+
+    // 점검 결과 복사: 버튼을 눌렀을 때만 복사합니다(자동 복사·저장·전송 없음).
+    const copyRow = node('div', null, { className: 'student-pc-copy' });
+    const copyButton = node('button', '점검 결과 복사', { type: 'button', className: 'btn', 'data-student-pc-copy': 'true' });
+    copyButton.disabled = !latest;
+    copyButton.addEventListener('click', () => { void copyReport(); });
+    copyRow.append(copyButton, node('span', latest
+      ? ' 값·잰 시각·확인 불가 이유만 글로 복사합니다. IP 주소·컴퓨터 이름·사용자 이름·토큰은 담지 않습니다.'
+      : ' 이번 조회가 성공한 뒤에 복사할 수 있습니다(이전 값은 복사하지 않습니다).', { className: 'muted' }));
+    if (state.copy && state.copy.status === 'ok') {
+      copyRow.append(node('p', `복사됨 · ${clockText(state.copy.at)} — 담당자에게 붙여 넣어 전달하세요.`, { className: 'state state-ok', role: 'status', 'data-student-pc-copy-result': 'ok' }));
+    } else if (state.copy && state.copy.status === 'error') {
+      // 복사 실패를 성공처럼 보이지 않게 하고, 같은 내용을 화면에 보여 직접 복사할 수 있게 합니다.
+      copyRow.append(node('p', `복사하지 못했습니다 (${state.copy.reason}). 아래 글을 직접 선택해 복사하세요.`, { className: 'state state-error', role: 'alert', 'data-student-pc-copy-result': 'error' }));
+      const area = node('textarea', null, { readonly: 'true', rows: '10', 'aria-label': '점검 결과 글', 'data-student-pc-copy-text': 'true' });
+      area.value = state.copy.text;
+      Object.assign(area.style, { width: '100%', fontFamily: 'monospace' });
+      copyRow.append(area);
+    }
+    parts.push(copyRow);
+    return parts;
+  }
+
+  async function copyReport() {
+    const latest = state.status === 'ok' ? state.history[0] : null;
+    if (!latest) return;
+    const text = buildPcReport(latest, state.history[1] || null, state.sdp);
+    state.focusCopy = true;
+    try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') throw Object.assign(new Error(), { name: 'NO_CLIPBOARD' });
+      await navigator.clipboard.writeText(text);
+      state.copy = { status: 'ok', at: Date.now() };
+    } catch (error) {
+      const reason = error && error.name === 'NO_CLIPBOARD' ? '이 브라우저는 클립보드 복사를 지원하지 않음' : '브라우저가 클립보드 접근을 허용하지 않음';
+      state.copy = { status: 'error', reason, text };
+    }
+    redraw();
+  }
+
   // 3일차 「연결과 기록」: PC 실측 두 줄과 SDP 연결 한 줄을 출처별로 나눠 보여 줍니다.
   function renderConnection(latest, previous) {
     const box = node('section', null, { className: 'student-pc-connection', 'aria-label': '연결과 기록' });
@@ -1247,7 +1360,7 @@ function createPcDashboard({ api, onChange }) {
     for (const [key, title] of PC_CONN) {
       const info = latest ? latest.conn[key] : null;
       const label = !info || !info.ok ? '확인 불가' : latest.stale ? '오래됨' : info.caution ? '주의 · 실측' : '실측';
-      const dd = node('dd', null, { 'data-student-pc-conn': key, 'data-state': !info || !info.ok ? 'unavailable' : 'measured' });
+      const dd = node('dd', null, { 'data-student-pc-conn': key, 'data-state': !info || !info.ok ? 'unavailable' : 'measured', tabindex: '-1' });
       dd.append(node('p', `${label} · ${info ? info.text : '이번 PC 조회가 실패해 읽지 못함'}`, { className: `state ${!info || !info.ok ? 'state-empty' : info.caution ? 'state-error' : 'state-ok'}` }));
       if (!info) dd.append(node('p', '이유: 위의 「이번 조회 실패」를 확인하세요. 이전 값은 현재 상태로 표시하지 않습니다.', { className: 'muted' }));
       else if (!info.ok) dd.append(node('p', `이유: ${info.note}`, { className: 'muted' }));
@@ -1270,6 +1383,12 @@ function createPcDashboard({ api, onChange }) {
 
   // 다시 그린 뒤에도 키보드 포커스를 「다시 조회」 버튼에 둡니다.
   function restoreFocus() {
+    if (state.focusCopy && typeof document !== 'undefined') {
+      state.focusCopy = false;
+      const copyTarget = document.querySelector('[data-student-pc-copy]');
+      if (copyTarget) copyTarget.focus();
+      return;
+    }
     if (!state.focusAfter || typeof document === 'undefined') return;
     if (state.status !== 'loading') state.focusAfter = false;
     const target = document.querySelector('[data-student-pc-refresh]');
