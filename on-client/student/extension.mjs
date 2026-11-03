@@ -1829,7 +1829,8 @@ function badgeCopy(badge) {
   if (!badge) return null;
   const copy = badge.cloneNode(true);
   for (const name of [...copy.getAttributeNames()]) if (name.startsWith('data-') || name === 'role') copy.removeAttribute(name);
-  Object.assign(copy.style, { display: 'inline-block', padding: '2px 10px', borderRadius: '999px', fontWeight: '700', fontSize: '0.8rem' });
+  // 좁은 칸에서 줄이 바뀌어도 모양이 깨지지 않도록 알약 대신 모서리가 살짝 둥근 사각형으로 둡니다(문구는 13단계 그대로).
+  Object.assign(copy.style, { display: 'inline-block', padding: '2px 8px', borderRadius: '6px', fontWeight: '700', fontSize: '0.78rem', lineHeight: '1.35', maxWidth: '100%' });
   return copy;
 }
 const grid = (min) => { const g = node('div', null, { className: 'student-grid' }); Object.assign(g.style, { display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: '10px', margin: '8px 0' }); return g; };
