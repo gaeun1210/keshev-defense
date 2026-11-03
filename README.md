@@ -12,7 +12,7 @@
 | 준비물 | 확인 방법 |
 |---|---|
 | Windows 10/11 PC | — |
-| **Node.js 22~24판** (수업 기준 24.19.0) | PowerShell에서 `node --version` → `v22.…`~`v24.…`이면 됩니다. 없거나 `v25` 이상이면 <https://nodejs.org> 에서 **24판(LTS)** 을 설치한 뒤 **PowerShell 창을 새로 엽니다** |
+| **Node.js 22\~24판** (수업 기준 24.19.0) | PowerShell에서 `node --version` → `v22.…`\~`v24.…`이면 됩니다. 없거나 `v25` 이상이면 <https://nodejs.org> 에서 **24판(LTS)** 을 설치한 뒤 **PowerShell 창을 새로 엽니다** |
 
 `npm install` 같은 추가 설치는 **필요 없습니다**(외부 패키지를 쓰지 않습니다). Git도 없어도 됩니다.
 
@@ -67,7 +67,7 @@ PowerShell 창에서 **Ctrl+C**. 그래도 꺼지지 않으면 **Ctrl+Shift+Esc*
 
 ## 실행 확인 기록
 
-- 2026-11-03 · 같은 반 동료 1명이 이 안내만 보고 실행 · GitHub ZIP · Node.js v24.19.0 · 기준 커밋 `7d54cbb` · 1~5단계 완료(약 4분) · 막힌 곳 없음
+- 2026-11-03 · 같은 반 동료 1명이 이 안내만 보고 실행 · GitHub ZIP · Node.js v24.19.0 · 기준 커밋 `7d54cbb` · 1\~5단계 완료(약 4분) · 막힌 곳 없음
 
 ---
 만든 사람: 김가은 (SKT ALEPH 과정, BYTE BACK 방어전) · 학생이 만든 부분은 `on-client/student/`에 있고, 그 밖의 파일은 수업에서 제공한 시작 틀입니다.
