@@ -1164,6 +1164,13 @@ function buildPcReport(entry, previous, sdp) {
 // ---------- 총공세 4일차: 화면 정리(핵심 3가지 먼저)·추이 그래프·최근 기록 타임라인·오류 화면 ----------
 const PC_TIMELINE_LIMIT = 50;
 const PC_FILTERS = Object.freeze([['all', '전체'], ['caution', '주의'], ['unavailable', '확인 불가']]);
+const PC_DARK = Object.freeze({
+  '--bg': '#0f1b2d', '--surface': '#16263d', '--border': '#2b4263', '--text': '#e6edf6', '--muted': '#a9b8cc',
+  '--accent': '#2dd4bf', '--accent-soft': '#123a3a', '--on-accent': '#0f1b2d',
+  '--allow': '#86efac', '--allow-soft': '#12402c', '--deny': '#fca5a5', '--deny-soft': '#4a1a22',
+  '--unknown': '#c3cfdf', '--unknown-soft': '#26354a', '--challenge': '#fcd34d', '--challenge-soft': '#3d3112',
+});
+const PC_CRITERIA = Object.freeze({ cpu: '주의 기준 90 % 이상', memory: '주의 기준 85 % 이상', disk: '주의 기준 여유 10 % 미만', firewall: '주의 기준: 꺼진 프로필', network: '주의 기준: 연결된 어댑터 0개' });
 const PC_TRENDS = Object.freeze([
   ['cpu', 'CPU 사용률', '%', 90, '주의 기준 90 % 이상'],
   ['memory', '메모리 사용률', '%', 85, '주의 기준 85 % 이상'],
@@ -1256,7 +1263,7 @@ function renderTrendChart(entries, [key, title, unit, limit, limitText]) {
 }
 
 function createPcDashboard({ api, onChange }) {
-  const state = { status: 'idle', error: null, history: [], sdp: null, copy: null, focusSel: null, loadingSince: null, timeline: [], filter: 'all', open: { table: false, about: false } };
+  const state = { status: 'idle', error: null, history: [], sdp: null, copy: null, focusSel: null, loadingSince: null, timeline: [], filter: 'all', open: { table: false, about: false }, theme: 'light' };
   const hasApi = !!(api && typeof api.get === 'function');
   const redraw = () => { if (typeof onChange === 'function') onChange(); };
   const addTimeline = (at, flags, text, kind) => {
@@ -1327,15 +1334,34 @@ function createPcDashboard({ api, onChange }) {
     // 아래 제공 순서의 다음 제목(기기·세션·알림)과 붙지 않게 여백과 구분선을 둡니다.
     Object.assign(root.style, { paddingBottom: '16px', marginBottom: '16px', borderBottom: '2px solid var(--border)' });
 
+    // 어두운 화면은 이 대시보드 안에서만 색 변수를 바꿉니다(제공 화면 색은 그대로). 모든 글자 대비 4.5:1 이상.
+    if (state.theme === 'dark') {
+      for (const [name, value] of Object.entries(PC_DARK)) root.style.setProperty(name, value);
+      Object.assign(root.style, { background: 'var(--bg)', color: 'var(--text)', borderRadius: '12px', padding: '16px' });
+    }
+    const head = node('div', null, { className: 'student-pc-head' });
+    Object.assign(head.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: '0 0 4px' });
     const title = node('h3', '내 PC 관제 대시보드');
-    Object.assign(title.style, { fontSize: '1.35rem', margin: '0 0 4px' });
-    root.append(title, node('p', '이 PC에서 일반 권한으로 읽기만 한 실측값입니다. 예시 값은 쓰지 않습니다.', { className: 'muted' }));
+    Object.assign(title.style, { fontSize: '1.35rem', margin: '0' });
+    const tag = node('span', '이 PC 실측 · 예시 값 없음', { title: '이 PC에서 일반 권한으로 읽기만 한 실측값입니다. 예시 값은 쓰지 않습니다.' });
+    Object.assign(tag.style, { fontSize: '0.75rem', fontWeight: '700', borderRadius: '999px', padding: '2px 8px', background: 'var(--allow-soft)', color: 'var(--allow)' });
+    const themes = node('div', null, { role: 'group', 'aria-label': '대시보드 화면 밝기' });
+    Object.assign(themes.style, { marginLeft: 'auto', display: 'inline-flex', border: '1px solid var(--border)', borderRadius: '999px', overflow: 'hidden' });
+    for (const [key, label] of [['light', '밝게'], ['dark', '어둡게']]) {
+      const on = state.theme === key;
+      const b = node('button', label, { type: 'button', 'aria-pressed': on ? 'true' : 'false', 'data-student-pc-theme': key });
+      Object.assign(b.style, { border: 'none', padding: '4px 12px', fontWeight: '700', cursor: 'pointer', background: on ? 'var(--accent)' : 'var(--surface)', color: on ? 'var(--on-accent, #fff)' : 'var(--text)' });
+      b.addEventListener('click', () => { state.theme = key; state.focusSel = `[data-student-pc-theme="${key}"]`; redraw(); });
+      themes.append(b);
+    }
+    head.append(title, tag, themes);
+    root.append(head);
 
     // 다시 조회 + 대기 표시
     const bar = node('div', null, { className: 'student-pc-toolbar' });
     Object.assign(bar.style, { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', margin: '8px 0' });
     const button = node('button', state.status === 'loading' ? '읽는 중…' : '다시 조회', { type: 'button', className: 'btn', 'data-student-pc-refresh': 'true', 'aria-label': state.status === 'loading' ? '내 PC 읽는 중' : '내 PC 다시 조회' });
-    Object.assign(button.style, { fontWeight: '600', padding: '6px 16px' });
+    Object.assign(button.style, { fontWeight: '700', padding: '8px 18px', background: 'var(--accent)', color: 'var(--on-accent, #fff)', borderColor: 'var(--accent)', borderRadius: '8px' });
     button.disabled = state.status === 'loading' || !hasApi;
     button.addEventListener('click', () => { void refresh(); });
     const lastText = state.status === 'loading' ? `이 PC에서 읽는 중… (${clockText(state.loadingSince)} 시작) 이전 값은 현재 값으로 보여 주지 않습니다.`
@@ -1347,6 +1373,7 @@ function createPcDashboard({ api, onChange }) {
       root.append(node('p', '확인 불가 — 제공 화면이 학생 조회 통로(api)를 넘겨주지 않았습니다.', { className: 'state state-empty' }));
       return root;
     }
+    if (latest) root.append(renderBanner(latest));
     root.append(...renderSummaryAndCopy());
 
     // 오류 화면: 실패한 항목과 다음 할 일. 예시·이전 값은 카드에 보여 주지 않습니다.
@@ -1356,23 +1383,11 @@ function createPcDashboard({ api, onChange }) {
     const cards = section('① 상태 카드', { 'data-student-pc-section': 'cards' });
     if (latest) {
       cards.append(node('p', `${latest.stale ? '오래됨 — ' : ''}실측 · 잰 시각 ${clockText(latest.measuredAt)} (${new Date(latest.measuredAt).toISOString()})`,
-        { className: `state ${latest.stale ? 'state-empty' : 'state-ok'}`, 'data-student-pc-measured-at': new Date(latest.measuredAt).toISOString() }));
+        { className: latest.stale ? 'state state-empty' : 'muted', 'data-student-pc-measured-at': new Date(latest.measuredAt).toISOString() }));
       const grid = node('div', null, { className: 'student-pc-cards' });
       // 제공 화면 CSP가 style 속성 문자열을 막으므로, CSSOM 속성으로 배치를 지정합니다.
       Object.assign(grid.style, { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px', margin: '8px 0' });
-      for (const [key, cardTitle] of PC_CARDS) {
-        const info = latest.metrics[key];
-        const card = node('article', null, { className: 'student-pc-card', 'data-student-pc-metric': key, 'data-state': info.ok ? (latest.stale ? 'stale' : 'measured') : 'unavailable', tabindex: '-1' });
-        Object.assign(card.style, { border: '1px solid var(--border)', borderRadius: '8px', padding: '10px', background: 'var(--surface)' });
-        const badge = !info.ok ? '확인 불가' : latest.stale ? '오래됨' : info.caution ? '주의 · 실측' : '실측';
-        const value = node('p', info.ok ? info.text : '이번 조회에서 읽지 못함', { className: 'student-pc-value' });
-        Object.assign(value.style, { fontSize: '1.15rem', fontWeight: '600', margin: '4px 0' });
-        card.append(node('h5', cardTitle), node('span', badge, { className: `state ${!info.ok ? 'state-empty' : info.caution ? 'state-error' : 'state-ok'}` }), value,
-          node('p', info.ok ? `잰 시각 ${clockText(latest.measuredAt)}` : `이유: ${info.note}`, { className: 'muted' }));
-        if (info.ok) card.append(node('p', info.note, { className: 'muted' }));
-        card.append(node('p', pcDelta(key, info, previous && previous.metrics[key]), { 'data-student-pc-delta': key }));
-        grid.append(card);
-      }
+      for (const [key, cardTitle] of PC_CARDS) grid.append(renderKpiCard(key, cardTitle, latest, previous));
       cards.append(grid);
     } else {
       cards.append(node('p', state.status === 'error' ? '이번 조회가 실패해 카드에 값을 보여 주지 않습니다. 위의 「다음에 할 일」을 따라 주세요.'
@@ -1444,6 +1459,80 @@ function createPcDashboard({ api, onChange }) {
     );
     root.append(about);
     return root;
+  }
+
+  // 시안 C: 주의가 있을 때만 「지금 확인할 것」 배너를 맨 위에 둡니다. 주의가 없으면 작은 확인 줄만 보여 줍니다.
+  function renderBanner(latest) {
+    const items = classifyPcEntry(latest);
+    const caution = items.filter(item => item.kind === 'caution');
+    const unavailable = items.filter(item => item.kind === 'unavailable').length;
+    const at = `실측 ${clockText(latest.measuredAt)}`;
+    if (!caution.length) {
+      const line = node('p', `이번 조회에서 주의 없음 · 확인 불가 ${unavailable} · ${at}${latest.stale ? ' · 오래됨' : ''}`, { className: 'state state-ok', role: 'status', 'data-student-pc-banner': 'clear' });
+      Object.assign(line.style, { margin: '8px 0', fontWeight: '600' });
+      return line;
+    }
+    const box = node('section', null, { className: 'student-pc-banner', role: 'status', 'aria-label': '지금 확인할 것', 'data-student-pc-banner': String(caution.length) });
+    Object.assign(box.style, { margin: '10px 0', padding: '12px 16px', borderRadius: '12px', border: '2px solid var(--deny)', background: 'var(--deny-soft)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 18px' });
+    const left = node('div');
+    const label = node('p', `지금 확인할 것 · ${at}${latest.stale ? ' · 오래됨' : ''}`);
+    Object.assign(label.style, { margin: '0', color: 'var(--deny)', fontWeight: '700', fontSize: '0.8rem' });
+    const count = node('p', `주의 ${caution.length}건`);
+    Object.assign(count.style, { margin: '0', color: 'var(--deny)', fontWeight: '900', fontSize: '1.7rem', lineHeight: '1.2', whiteSpace: 'nowrap' });
+    left.append(label, count);
+    const middle = node('div');
+    Object.assign(middle.style, { flex: '1 1 320px', minWidth: '0' });
+    for (const item of caution) {
+      const row = node('p', `${item.title} — ${item.info.text} · ${PC_CRITERIA[item.key] || '기준을 넘음'}`);
+      Object.assign(row.style, { margin: '2px 0', fontWeight: '700' });
+      middle.append(row);
+    }
+    middle.append(node('p', '앱은 읽기만 합니다. 정리·설정 변경 여부는 사용자가 판단합니다. 예시 값이 아니라 이 PC에서 잰 값입니다.', { className: 'muted' }));
+    box.append(left, middle);
+    return box;
+  }
+
+  // 시안 B: 큰 숫자 + 단위 + 진행 막대 + 위쪽 색 띠. 상태 이름(실측·주의·확인 불가·오래됨)과 잰 시각은 그대로 글로 둡니다.
+  function renderKpiCard(key, cardTitle, latest, previous) {
+    const info = latest.metrics[key];
+    const kind = !info.ok ? 'unavailable' : latest.stale ? 'stale' : info.caution ? 'caution' : 'measured';
+    const tone = { unavailable: 'var(--unknown)', stale: 'var(--unknown)', caution: 'var(--deny)', measured: 'var(--accent)' }[kind];
+    const card = node('article', null, { className: 'student-pc-card', 'data-student-pc-metric': key, 'data-state': kind === 'caution' ? 'measured' : kind, tabindex: '-1' });
+    Object.assign(card.style, { border: '1px solid var(--border)', borderTop: `4px solid ${tone}`, borderRadius: '10px', padding: '12px', background: 'var(--surface)' });
+    const head = node('div');
+    Object.assign(head.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' });
+    const title = node('h5', cardTitle);
+    Object.assign(title.style, { margin: '0', fontSize: '0.85rem', color: 'var(--muted)', fontWeight: '600' });
+    const badge = node('span', { unavailable: '확인 불가', stale: '오래됨', caution: '주의 · 실측', measured: '실측' }[kind], { className: `state ${kind === 'caution' ? 'state-error' : kind === 'measured' ? 'state-ok' : 'state-empty'}` });
+    Object.assign(badge.style, { display: 'inline-block', padding: '1px 8px', borderRadius: '999px', fontWeight: '600', fontSize: '0.8rem' });
+    head.append(title, badge);
+    card.append(head);
+    if (!info.ok) {
+      const value = node('p', '이번 조회에서 읽지 못함', { className: 'student-pc-value' });
+      Object.assign(value.style, { fontSize: '1.05rem', fontWeight: '700', margin: '8px 0 4px' });
+      card.append(value, node('p', `이유: ${info.note}`, { className: 'muted' }));
+      card.append(node('p', pcDelta(key, info, previous && previous.metrics[key]), { 'data-student-pc-delta': key, className: 'muted' }));
+      return card;
+    }
+    const on = key === 'firewall' ? (info.signature.match(/:true/g) || []).length : 0;
+    const [big, unit, pct, sub] = key === 'cpu' ? [info.pct.toFixed(1), '%', info.pct, '200ms 순간값']
+      : key === 'memory' ? [info.pct.toFixed(0), '% 사용', info.pct, info.text.replace(/ \([^)]*\)$/, '')]
+      : key === 'disk' ? [info.pct.toFixed(1), '% 여유', info.pct, info.text.replace(/ \([^)]*\)$/, '')]
+      : [String(on), '/ 3 프로필 켜짐', (on / 3) * 100, info.text];
+    const value = node('p', null, { className: 'student-pc-value', 'aria-label': `${cardTitle} ${info.text}` });
+    Object.assign(value.style, { margin: '6px 0 2px' });
+    const number = node('span', big); Object.assign(number.style, { fontSize: '1.9rem', fontWeight: '800', letterSpacing: '-0.5px' });
+    const unitText = node('span', ` ${unit}`); Object.assign(unitText.style, { color: 'var(--muted)', fontSize: '0.9rem' });
+    value.append(number, unitText);
+    const bar = node('div', null, { 'aria-hidden': 'true' });
+    Object.assign(bar.style, { height: '6px', borderRadius: '3px', background: 'var(--unknown-soft)', overflow: 'hidden', margin: '6px 0' });
+    const fill = node('div'); Object.assign(fill.style, { height: '100%', width: `${Math.max(2, Math.min(100, pct))}%`, background: tone, borderRadius: '3px' });
+    bar.append(fill);
+    card.append(value, bar, node('p', sub, { className: 'muted' }), node('p', `잰 시각 ${clockText(latest.measuredAt)} · ${PC_CRITERIA[key]}`, { className: 'muted' }));
+    const delta = node('p', pcDelta(key, info, previous && previous.metrics[key]), { 'data-student-pc-delta': key });
+    Object.assign(delta.style, { margin: '4px 0 0', fontSize: '0.85rem' });
+    card.append(delta);
+    return card;
   }
 
   function renderFailure() {
@@ -1549,7 +1638,7 @@ function createPcDashboard({ api, onChange }) {
       copyRow.append(node('p', `복사하지 못했습니다 (${state.copy.reason}). 아래 글을 직접 선택해 복사하세요.`, { className: 'state state-error', role: 'alert', 'data-student-pc-copy-result': 'error' }));
       const area = node('textarea', null, { readonly: 'true', rows: '10', 'aria-label': '점검 결과 글', 'data-student-pc-copy-text': 'true' });
       area.value = state.copy.text;
-      Object.assign(area.style, { width: '100%', fontFamily: 'monospace' });
+      Object.assign(area.style, { width: '100%', fontFamily: 'monospace', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '8px' });
       copyRow.append(area);
     }
     parts.push(copyRow);
@@ -1599,6 +1688,7 @@ function createPcDashboard({ api, onChange }) {
     if (sdp) sdpDd.append(node('p', sdp.note, { className: 'muted' }));
     list.append(node('dt', 'SDP 서버 연결'), sdpDd);
     box.append(list);
+    for (const p of box.querySelectorAll('p')) p.style.margin = '3px 0';
     return box;
   }
 
@@ -1613,22 +1703,410 @@ function createPcDashboard({ api, onChange }) {
   return { render, restoreFocus };
 }
 
+// ---------- 총공세 디자인 통일: 학생 칸 공통 겉모습 ----------
+// 13~20단계 렌더 함수가 만든 화면을 그대로 받아, 글자·여백·상태 표시 모양만 맞춥니다(내용·순서·기능·data 속성은 바꾸지 않음).
+// 제공 CSP가 style 속성 문자열을 막으므로 CSSOM 속성으로만 지정하고, 화면 폭에 따른 제공 배치 규칙(.kv 한 열 전환 등)은 덮지 않습니다.
+const PILL_MAX = 28;
+function polishStudent(root, present) {
+  if (!root || typeof root.querySelectorAll !== 'function') return root;
+  const apply = () => { applyPolish(root); if (typeof present === 'function') present(root); };
+  apply();
+  // 15단계 상세 열기처럼 칸 안에서 바로 바뀌는 화면도 같은 겉모습을 유지합니다(요소가 추가될 때만 다시 적용, 내용은 건드리지 않음).
+  if (typeof MutationObserver === 'function' && !root.__studentPolish) {
+    root.__studentPolish = new MutationObserver(() => apply());
+    root.__studentPolish.observe(root, { childList: true, subtree: true });
+  }
+  return root;
+}
+function applyPolish(root) {
+  // 관제 대시보드는 자체 디자인을 쓰므로 공통 겉모습에서 뺍니다.
+  const all = selector => [root, ...root.querySelectorAll(selector)].filter(el => el.matches && el.matches(selector) && !el.closest('.student-pc-dashboard'));
+  for (const h of all('h3')) Object.assign(h.style, { fontSize: '1.15rem', fontWeight: '700', margin: '0 0 6px' });
+  for (const h of all('h4, h5')) Object.assign(h.style, { fontSize: '0.95rem', fontWeight: '700', margin: '14px 0 6px', paddingLeft: '8px', borderLeft: '3px solid var(--accent)' });
+  for (const p of all('p.muted')) Object.assign(p.style, { margin: '4px 0' });
+  for (const s of all('.state')) {
+    const short = (s.textContent || '').trim().length <= PILL_MAX;
+    const inline = s.tagName === 'SPAN' || (s.parentElement && ['DD', 'LI', 'TD'].includes(s.parentElement.tagName));
+    if (short && inline) Object.assign(s.style, { display: 'inline-block', padding: '2px 10px', borderRadius: '999px', fontWeight: '600', fontSize: '0.85rem', margin: '2px 0' });
+    else Object.assign(s.style, { borderLeft: '4px solid currentColor', margin: '6px 0' });
+  }
+  for (const list of all('ul')) {
+    Object.assign(list.style, { listStyle: 'none', padding: '0', margin: '6px 0' });
+    for (const li of list.children) if (li.tagName === 'LI') Object.assign(li.style, { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '6px', background: 'var(--surface)' });
+  }
+  for (const dl of all('dl.kv')) Object.assign(dl.style, { rowGap: '8px', gridTemplateColumns: 'minmax(90px, max-content) minmax(0, 1fr)' });
+  for (const dt of all('dl.kv > dt')) Object.assign(dt.style, { fontWeight: '600' });
+  for (const b of all('button.btn')) Object.assign(b.style, { borderRadius: '8px', fontWeight: '600', padding: '6px 14px' });
+  for (const t of all('table')) Object.assign(t.style, { width: '100%', borderCollapse: 'collapse', textAlign: 'left' });
+  for (const c of all('th, td')) Object.assign(c.style, { padding: '6px 8px', borderBottom: '1px solid var(--border)' });
+  for (const c of all('caption')) Object.assign(c.style, { textAlign: 'left', color: 'var(--muted)', fontSize: '0.875rem', padding: '0 0 4px' });
+  for (const f of all('select')) Object.assign(f.style, { padding: '4px 8px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface)' });
+  return root;
+}
+
+// ---------- 총공세 디자인 2차: 칸별 표시 정리(배치만 바꿈) ----------
+// 13~20단계 함수가 만든 화면을 받아 「핵심 한 줄 + 주요 버튼 + 접는 설명」 모양으로 배치만 바꿉니다.
+// - 내용·순서 의미·data 속성·판단 규칙은 바꾸지 않습니다. 버튼·선택 상자처럼 포커스를 받는 요소는 옮기지 않습니다.
+// - 접는 것은 설명 문단뿐입니다. 확인 불가·실패·주의·「실행되지 않음」·「침해 판정 아님」 같은 안전 문구는 그대로 보입니다.
+// - 같은 칸이 다시 그려지면(15단계 상세 열기 등) 다시 적용됩니다. 구조 변경은 한 번만, 모양은 매번 적용합니다.
+const TONE = Object.freeze({
+  ok: ['var(--allow)', 'var(--allow-soft)'], error: ['var(--deny)', 'var(--deny-soft)'],
+  empty: ['var(--unknown)', 'var(--unknown-soft)'], loading: ['var(--accent)', 'var(--accent-soft)'],
+});
+const toneOf = el => (!el ? 'empty' : el.classList.contains('state-ok') ? 'ok' : el.classList.contains('state-error') ? 'error' : el.classList.contains('state-loading') ? 'loading' : 'empty');
+const once = (el, key) => { if (!el || el.dataset[key] === '1') return false; el.dataset[key] = '1'; return true; };
+const styleAll = (els, style) => { for (const el of els) if (el) Object.assign(el.style, style); };
+
+// 제목 줄: 제목 + 자료 출처 표시(원래 출처 문장은 「ⓘ 설명」에 그대로 보관).
+function headerRow(container, title, sourceP) {
+  let head = container.querySelector(':scope > .student-head');
+  if (!head && title && once(container, 'studentHead')) {
+    head = node('div', null, { className: 'student-head' });
+    container.insertBefore(head, title);
+    head.append(title);
+    if (sourceP) {
+      const text = (sourceP.textContent || '').split(':').slice(1).join(':').trim() || sourceP.textContent;
+      head.append(node('span', text, { className: 'student-source-tag', title: sourceP.textContent }));
+    }
+  }
+  if (head) {
+    Object.assign(head.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: '0 0 10px' });
+    const tag = head.querySelector('.student-source-tag');
+    if (tag) {
+      const live = /실측|연결됨/.test(tag.textContent);
+      Object.assign(tag.style, { fontSize: '0.75rem', fontWeight: '700', borderRadius: '999px', padding: '2px 8px',
+        background: live ? 'var(--allow-soft)' : 'var(--challenge-soft)', color: live ? 'var(--allow)' : 'var(--challenge)' });
+    }
+    const h = head.querySelector('h3');
+    if (h) Object.assign(h.style, { margin: '0', fontSize: '1.15rem' });
+  }
+  return head;
+}
+
+// 「ⓘ 설명」: 설명 문단을 접어 둡니다(지우지 않음). 같은 칸에서 열림 상태를 기억합니다.
+const infoOpen = new Map();
+function infoBox(container, key, items, summaryText = 'ⓘ 설명') {
+  const parts = items.filter(Boolean);
+  let box = container.querySelector(`:scope > details[data-student-info="${key}"]`);
+  if (!box && parts.length) {
+    box = node('details', null, { 'data-student-info': key });
+    box.open = !!infoOpen.get(key);
+    box.addEventListener('toggle', () => infoOpen.set(key, box.open));
+    box.append(node('summary', summaryText));
+    container.append(box);
+  }
+  if (box) {
+    for (const p of parts) if (p.parentElement !== box) box.append(p);
+    Object.assign(box.style, { marginTop: '10px', paddingTop: '8px', borderTop: '1px dashed var(--border)', color: 'var(--muted)', fontSize: '0.85rem' });
+    const s = box.querySelector('summary');
+    if (s) Object.assign(s.style, { cursor: 'pointer', color: 'var(--accent)', fontWeight: '700' });
+  }
+  return box;
+}
+
+// 큰 상태 상자: 상태 문장을 크게, 색은 원래 상태(class)를 따릅니다.
+function heroBox(el, big) {
+  if (!el) return;
+  const [fg, bg] = TONE[toneOf(el)];
+  Object.assign(el.style, { display: 'block', borderLeft: 'none', border: `2px solid ${fg}`, background: bg, color: fg, borderRadius: '12px', padding: '12px 14px', margin: '8px 0', fontWeight: '700', fontSize: big ? '1.15rem' : '0.95rem' });
+}
+// 조회 전·요청 전 안내: 무엇을 누르면 무엇이 보이는지 눈에 띄게.
+function idleBox(el) {
+  if (!el) return;
+  Object.assign(el.style, { display: 'block', border: '2px dashed var(--border)', borderLeft: '2px dashed var(--border)', background: 'var(--surface)', color: 'var(--text)', borderRadius: '12px', padding: '14px 16px', fontWeight: '600' });
+}
+function tile(label, value, badge, tone) {
+  const box = node('div', null, { className: 'student-tile' });
+  Object.assign(box.style, { border: '1px solid var(--border)', borderTop: `4px solid ${tone === 'error' ? 'var(--deny)' : tone === 'empty' ? 'var(--unknown)' : 'var(--accent)'}`, borderRadius: '10px', padding: '10px 12px', background: 'var(--surface)', minWidth: '0' });
+  const l = node('p', label); Object.assign(l.style, { margin: '0', fontSize: '0.8rem', color: 'var(--muted)', fontWeight: '600' });
+  const v = node('p', value); Object.assign(v.style, { margin: '2px 0 6px', fontSize: '1.15rem', fontWeight: '800', overflowWrap: 'anywhere' });
+  box.append(l, v);
+  if (badge) box.append(badge);
+  return box;
+}
+// 배지 복제본: 화면 표시용이므로 data 속성은 지웁니다(원본 배지는 「자세히」에 그대로 남음).
+function badgeCopy(badge) {
+  if (!badge) return null;
+  const copy = badge.cloneNode(true);
+  for (const name of [...copy.getAttributeNames()]) if (name.startsWith('data-') || name === 'role') copy.removeAttribute(name);
+  Object.assign(copy.style, { display: 'inline-block', padding: '2px 10px', borderRadius: '999px', fontWeight: '700', fontSize: '0.8rem' });
+  return copy;
+}
+const grid = (min) => { const g = node('div', null, { className: 'student-grid' }); Object.assign(g.style, { display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: '10px', margin: '8px 0' }); return g; };
+const ddOf = (dl, term) => { for (const dt of dl ? dl.querySelectorAll(':scope > dt') : []) if (dt.textContent === term) return dt.nextElementSibling; return null; };
+
+// 13단계 · 현재 로그인: 사용자·기기·세션 타일 + 주의 한 번 + 자세히(ID·목록)
+function presentIdentity(root) {
+  const me = root.querySelector('[data-part="me"]');
+  if (!me) return;
+  const title = me.querySelector(':scope > h3, :scope > .student-head > h3');
+  const source = me.querySelector(':scope > p[data-mode]');
+  headerRow(me, title, source);
+  const list = me.querySelector(':scope > dl.kv');
+  if (list && once(me, 'studentTiles')) {
+    const tiles = grid(120);
+    tiles.className = 'student-grid student-identity-tiles';
+    const deviceBadge = ddOf(list, '기기 보안 상태') && ddOf(list, '기기 보안 상태').querySelector('.state');
+    const sessionBadge = ddOf(list, '세션 상태') && ddOf(list, '세션 상태').querySelector('.state');
+    const tone = b => (b && b.classList.contains('state-ok') ? 'ok' : 'error');
+    tiles.append(
+      tile('사용자', (ddOf(list, '사용자') || {}).textContent || '확인 불가', null, 'ok'),
+      tile('기기', (ddOf(list, '현재 기기') || {}).textContent || '확인 불가', badgeCopy(deviceBadge), tone(deviceBadge)),
+      tile('세션', (ddOf(list, '세션 ID') || {}).textContent || '확인 불가', badgeCopy(sessionBadge), tone(sessionBadge)),
+    );
+    me.insertBefore(tiles, list);
+  }
+  const alert = me.querySelector(':scope > p.state-error[role="alert"]');
+  if (alert) Object.assign(alert.style, { fontWeight: '700', margin: '8px 0' });
+  // 목록 칸은 정상으로 받았을 때만 접습니다(불러오는 중·실패·확인 불가는 그대로 보임).
+  const lists = [...root.querySelectorAll(':scope > section[data-part="devices"], :scope > section[data-part="sessions"]')].filter(s => s.dataset.state === 'ok');
+  for (const s of root.querySelectorAll(':scope > section[data-part="devices"], :scope > section[data-part="sessions"]')) {
+    const t = s.querySelector(':scope > h3'); if (t) Object.assign(t.style, { fontSize: '0.95rem', margin: '10px 0 4px' });
+  }
+  infoBox(root, 'identity', [source, list, ...lists], 'ⓘ 자세히 (자료 출처 · 사용자 ID · 기기 ID · 세션 ID · 내 기기 목록 · 내 로그인 세션)');
+}
+
+// 14단계 · 업무 앱 판정: 판정을 큰 상자로, 이유·시각은 옆 타일로
+function presentDecision(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  const source = root.querySelector(':scope > p[data-mode]');
+  headerRow(root, title, source);
+  const app = root.querySelector(':scope > p[data-app-id]');
+  const verdict = root.querySelector(':scope p[data-decision]');
+  const state = root.dataset.state;
+  if (state === 'idle') idleBox(verdict);
+  else if (state === 'ok' && verdict) {
+    if (once(root, 'studentDecision')) {
+      const wrap = grid(240); wrap.className = 'student-grid student-decision-grid';
+      const hero = node('div', null, { className: 'student-decision-hero' });
+      root.insertBefore(wrap, verdict);
+      const next = verdict.nextElementSibling;
+      hero.append(...[app, verdict].filter(Boolean));
+      // 판정 설명(정의되지 않은 값 안내 포함)은 판정 상자 안에 그대로 둡니다.
+      let sib = next;
+      while (sib && sib.tagName === 'P') { const n = sib.nextElementSibling; hero.append(sib); sib = n; }
+      const kv = root.querySelector(':scope > dl.kv');
+      const side = node('div', null, { className: 'student-decision-side' });
+      if (kv) side.append(kv);
+      wrap.append(hero, side);
+    }
+    const hero = root.querySelector('.student-decision-hero');
+    const [fg, bg] = TONE[toneOf(verdict)];
+    if (hero) Object.assign(hero.style, { border: `2px solid ${fg}`, background: bg, borderRadius: '12px', padding: '12px 14px' });
+    Object.assign(verdict.style, { background: 'none', border: 'none', borderLeft: 'none', padding: '0', fontSize: '1.5rem', fontWeight: '900', color: fg, margin: '2px 0' });
+    if (app) Object.assign(app.style, { margin: '0', fontSize: '0.85rem', color: 'var(--muted)', fontWeight: '600' });
+    const side = root.querySelector('.student-decision-side');
+    if (side) Object.assign(side.style, { border: '1px solid var(--border)', borderRadius: '12px', padding: '12px 14px', background: 'var(--surface)' });
+  } else heroBox(verdict, false);
+  infoBox(root, 'decision', [source], 'ⓘ 설명 (자료 출처)');
+}
+
+// 15단계 · 접속 기록: 필터 한 줄, 기록은 한 줄 카드(시각·종류 | 요약 | 상세 버튼), 상세는 근거·규칙·상태 3칸
+function presentEvents(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  const source = root.querySelector(':scope > p[data-mode]');
+  const scope = root.querySelector(':scope > p[data-student-event-scope]');
+  headerRow(root, title, source);
+  const bar = root.querySelector(':scope > .student-event-filters');
+  if (bar) {
+    Object.assign(bar.style, { display: 'flex', flexWrap: 'wrap', gap: '6px 16px', alignItems: 'center', padding: '8px 10px', background: 'var(--accent-soft)', borderRadius: '10px', margin: '0 0 8px' });
+    styleAll(bar.querySelectorAll('.student-filter'), { margin: '0' });
+    styleAll(bar.querySelectorAll('label'), { fontWeight: '700', fontSize: '0.85rem' });
+  }
+  for (const li of root.querySelectorAll('.student-event-list > li')) {
+    const ps = [...li.querySelectorAll(':scope > p')];
+    const button = li.querySelector(':scope > button');
+    const detail = li.querySelector(':scope > .student-event-detail');
+    Object.assign(li.style, { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.6fr) auto', columnGap: '14px', rowGap: '2px', alignItems: 'center', padding: '10px 12px',
+      border: `1px solid ${detail ? 'var(--accent)' : 'var(--border)'}`, boxShadow: detail ? '0 0 0 2px var(--accent-soft)' : 'none' });
+    if (ps[0]) Object.assign(ps[0].style, { gridColumn: '1', gridRow: '1', margin: '0', fontWeight: '700', fontSize: '0.85rem' });
+    if (ps[1]) Object.assign(ps[1].style, { gridColumn: '1', gridRow: '2', margin: '0', fontSize: '0.8rem', color: 'var(--muted)' });
+    if (ps[2]) Object.assign(ps[2].style, { gridColumn: '2', gridRow: '1 / span 2', margin: '0', fontWeight: '600' });
+    if (button) {
+      Object.assign(button.style, { gridColumn: '3', gridRow: '1 / span 2' });
+      if (detail) Object.assign(button.style, { background: 'var(--accent)', color: 'var(--on-accent, #fff)', borderColor: 'var(--accent)' });
+    }
+    if (detail) {
+      Object.assign(detail.style, { gridColumn: '1 / -1', marginTop: '8px' });
+      const parts = [...detail.children];
+      const stateTitle = parts.find(el => el.tagName === 'H5' && el.textContent.startsWith('상태'));
+      if (stateTitle && once(detail, 'studentDetail')) {
+        const states = stateTitle.nextElementSibling;
+        const cols = grid(200); cols.className = 'student-grid student-event-detail-grid';
+        const evidence = parts.find(el => el.tagName === 'DIV' && el.querySelector('h5') && el.querySelector('h5').textContent.startsWith('근거'));
+        const rules = parts.find(el => el.tagName === 'DIV' && el.querySelector('h5') && el.querySelector('h5').textContent.startsWith('규칙'));
+        const stateBox = node('div');
+        detail.insertBefore(cols, evidence || stateTitle);
+        stateBox.append(stateTitle, states);
+        cols.append(...[evidence, rules, stateBox].filter(Boolean));
+      }
+      for (const col of detail.querySelectorAll('.student-event-detail-grid > div')) Object.assign(col.style, { border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 12px', background: 'var(--surface)' });
+      for (const li2 of detail.querySelectorAll('.student-event-detail-grid li')) Object.assign(li2.style, { border: 'none', padding: '2px 0', margin: '0' });
+      styleAll(detail.querySelectorAll('.student-event-detail-grid h5'), { margin: '0 0 6px', borderLeft: 'none', paddingLeft: '0', color: 'var(--muted)', fontSize: '0.8rem' });
+    }
+  }
+  infoBox(root, 'events', [scope, source], 'ⓘ 설명 (표시 범위 · 자료 출처)');
+}
+
+// 16단계 · 기기·세션·알림·도움정보: 기기·세션·알림 타일 3개 + 도움정보 한 줄
+function presentStatus16(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  const source = root.querySelector(':scope > p[data-mode]');
+  headerRow(root, title, source);
+  const parts = ['devices', 'sessions', 'notifications'].map(k => root.querySelector(`[data-student-status-part="${k}"]`)).filter(Boolean);
+  if (parts.length && once(root, 'studentStatusTiles')) {
+    const g = grid(220); g.className = 'student-grid student-status-tiles';
+    root.insertBefore(g, parts[0]);
+    g.append(...parts);
+  }
+  const notes = [];
+  for (const part of parts) {
+    const bad = part.querySelector('.state-error') || (part.dataset.studentStatusPart === 'notifications' && part.querySelector('[data-student-notifications]:not([data-student-notifications="0"])'));
+    Object.assign(part.style, { border: '1px solid var(--border)', borderTop: `4px solid ${bad ? 'var(--deny)' : 'var(--accent)'}`, borderRadius: '10px', padding: '10px 12px', background: 'var(--surface)', minWidth: '0' });
+    const h = part.querySelector(':scope > h4'); if (h) Object.assign(h.style, { margin: '0 0 4px', borderLeft: 'none', paddingLeft: '0', fontSize: '0.85rem', color: 'var(--muted)' });
+    // 출처·설명 문장은 접고, 목록·상태·실패 문구는 그대로 둡니다.
+    for (const p of part.querySelectorAll(':scope > p.muted')) notes.push(p);
+    for (const li of part.querySelectorAll('li')) Object.assign(li.style, { border: 'none', padding: '2px 0', margin: '0', background: 'none' });
+  }
+  const count = root.querySelector('[data-student-notifications]');
+  if (count && count.dataset.studentNotifications !== '0') Object.assign(count.style, { fontWeight: '800', color: 'var(--deny)', margin: '0 0 4px' });
+  const diag = root.querySelector('[data-student-status-part="diagnostics"]');
+  if (diag) {
+    Object.assign(diag.style, { border: '1px solid var(--border)', borderRadius: '10px', padding: '10px 12px', margin: '10px 0 0', background: 'var(--surface)' });
+    const h = diag.querySelector(':scope > h4'); if (h) Object.assign(h.style, { margin: '0 0 4px', borderLeft: 'none', paddingLeft: '0' });
+  }
+  infoBox(root, 'status16', [source, ...notes], 'ⓘ 설명 (자료 출처 · 목록 범위)');
+}
+
+// 17단계 · AI 연결 점검: 결과를 큰 상자로. test는 「시험 연결 확인」으로 낮춰 씁니다(앱 권한 확인 아님).
+function presentAiConnection(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  headerRow(root, title, null);
+  // 접는 것은 점검 범위 설명과 「다시 점검은…」 안내뿐입니다(「연결 완료가 아니며…」 같은 안전 문구는 그대로 보임).
+  const desc = [...root.querySelectorAll(':scope > p.muted')].find(p => p.textContent.startsWith('이 점검은'));
+  const check = root.querySelector('p[data-ai-check]');
+  if (check) {
+    const kind = check.dataset.aiCheck;
+    if (kind === 'idle') idleBox(check);
+    else heroBox(check, kind === 'ok');
+    if (kind === 'ok' && once(check, 'studentHeadline')) {
+      const audience = check.dataset.aiAudience;
+      const headline = audience === 'verified' ? '앱 권한 확인 후 연결 확인 (verified)' : audience === 'test' ? '시험 연결 확인 (test)' : '확인 불가 (unknown)';
+      const strong = node('span', headline, { className: 'student-hero-headline' });
+      check.prepend(strong, node('br'));
+    }
+    const strong = check.querySelector('.student-hero-headline');
+    if (strong) Object.assign(strong.style, { fontSize: '1.4rem', fontWeight: '900' });
+  }
+  const tail = [...root.querySelectorAll(':scope > p.muted')].filter(p => p !== desc && /다시 점검은/.test(p.textContent));
+  infoBox(root, 'ai', [desc, ...tail], 'ⓘ 설명');
+}
+
+// 18단계 · AI 사건 설명: 요약을 크게, 근거·규칙은 왼쪽, 조치 제안은 오른쪽, 확인 불가는 따로 강조
+function presentExplanation(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  headerRow(root, title, null);
+  const stateP = root.querySelector('p[data-student-explanation-state]');
+  if (stateP && ['no-event', 'idle'].includes(stateP.dataset.studentExplanationState)) idleBox(stateP);
+  else if (stateP) heroBox(stateP, false);
+  const failed = root.querySelector('p[data-student-explanation-failed]');
+  if (failed) heroBox(failed, false);
+  if (!root.hasAttribute('data-student-explanation-event')) return;
+  const h4s = [...root.querySelectorAll(':scope > h4, .student-explain-grid h4, .student-explain-unknown h4')];
+  const find = t => h4s.find(h => h.textContent.startsWith(t));
+  if (once(root, 'studentExplain')) {
+    const take = (start, stopTexts) => { const out = []; let el = start; while (el && !(el !== start && el.tagName === 'H4' && stopTexts.some(t => el.textContent.startsWith(t)))) { out.push(el); el = el.nextElementSibling; } return out; };
+    const left = node('div', null, { className: 'student-explain-left' });
+    const right = node('div', null, { className: 'student-explain-right' });
+    const unknownBox = node('div', null, { className: 'student-explain-unknown' });
+    const leftItems = take(find('AI 설명'), ['확인 불가 상태']);
+    const unknownItems = take(find('확인 불가 상태'), ['조치 제안']);
+    const rightItems = take(find('조치 제안'), ['__end__']);
+    const g = grid(260); g.className = 'student-grid student-explain-grid';
+    root.insertBefore(g, leftItems[0]);
+    left.append(...leftItems); right.append(...rightItems); unknownBox.append(...unknownItems);
+    g.append(left, right);
+    root.insertBefore(unknownBox, g.nextSibling);
+  }
+  const left = root.querySelector('.student-explain-left'), right = root.querySelector('.student-explain-right'), unknownBox = root.querySelector('.student-explain-unknown');
+  if (left) Object.assign(left.style, { border: '1px solid var(--border)', borderLeft: '4px solid var(--accent)', borderRadius: '10px', padding: '10px 12px', background: 'var(--surface)', minWidth: '0' });
+  if (right) Object.assign(right.style, { border: '1px solid var(--border)', borderTop: '4px solid var(--challenge)', borderRadius: '10px', padding: '10px 12px', background: 'var(--surface)', minWidth: '0' });
+  if (unknownBox) Object.assign(unknownBox.style, { borderLeft: '4px solid var(--unknown)', background: 'var(--unknown-soft)', borderRadius: '10px', padding: '8px 12px', margin: '8px 0' });
+  const summary = left && ddOf(left.querySelector('dl.kv'), 'AI 요약');
+  if (summary) Object.assign(summary.style, { fontSize: '1.05rem', fontWeight: '800' });
+  for (const li of root.querySelectorAll('.student-explain-grid li, .student-explain-unknown li')) Object.assign(li.style, { border: 'none', padding: '2px 0', margin: '0', background: 'none' });
+  for (const li of root.querySelectorAll('.student-explain-right li')) Object.assign(li.style, { fontWeight: '700' });
+}
+
+// 19단계 · 조치 상태: 진행 단계 막대(정상 흐름일 때만) + 현재 상태 큰 상자. 거절·실패·불명·기한 지남은 막대를 채우지 않습니다.
+const ACTION_STEPS = Object.freeze(['준비됨', '사람 확인', '서버 전달', '접수(ACK)', '효과 확인']);
+const ACTION_STEP_OF = Object.freeze({ prepared: 1, executing: 3, pending: 4, succeeded: 5 });
+function presentAction(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  headerRow(root, title, null);
+  const status = root.dataset.state;
+  const stateP = root.querySelector('p[data-action-status]');
+  if (stateP) (status === 'idle' ? idleBox : heroBox)(stateP, true);
+  const step = ACTION_STEP_OF[status] || 0;
+  if (step && once(root, 'studentSteps')) {
+    const bar = node('ol', null, { className: 'student-action-steps', 'aria-label': `조치 진행 단계: ${ACTION_STEPS.length}단계 중 ${step}단계(${ACTION_STEPS[step - 1]})` });
+    ACTION_STEPS.forEach((label, i) => {
+      const li = node('li', label, i + 1 === step ? { 'aria-current': 'step' } : {});
+      bar.append(li);
+    });
+    root.insertBefore(bar, stateP);
+  }
+  const bar = root.querySelector('.student-action-steps');
+  if (bar) {
+    Object.assign(bar.style, { display: 'grid', gridTemplateColumns: `repeat(${ACTION_STEPS.length}, 1fr)`, gap: '6px', listStyle: 'none', padding: '0', margin: '6px 0 10px' });
+    [...bar.children].forEach((li, i) => Object.assign(li.style, { borderTop: `6px solid ${i < step ? 'var(--accent)' : 'var(--unknown-soft)'}`, paddingTop: '4px', textAlign: 'center', fontSize: '0.8rem', border: 'none', borderRadius: '0', background: 'none', margin: '0', fontWeight: i + 1 === step ? '800' : '400', color: i + 1 === step ? 'var(--accent)' : 'var(--muted)' }));
+    [...bar.children].forEach((li, i) => { li.style.borderTop = `6px solid ${i < step ? 'var(--accent)' : 'var(--unknown-soft)'}`; });
+  }
+  const tail = [...root.querySelectorAll(':scope > p.muted')].filter(p => /이 칸은 상태만 보여 줍니다/.test(p.textContent));
+  const kv = root.querySelector(':scope > dl.kv');
+  infoBox(root, 'action', [kv, ...tail], 'ⓘ 자세히 (사건·조치·요청 번호 · 이 칸의 역할)');
+}
+
+// 20단계 · 패키지·취약점: 숫자 타일 3개(패키지·알려진 항목·확인 불가) + 표
+function presentVulnerabilities(root) {
+  const title = root.querySelector(':scope > h3, :scope > .student-head > h3');
+  const source = root.querySelector(':scope > p[data-mode]');
+  headerRow(root, title, source);
+  const scan = root.querySelector('p[data-student-scan]');
+  if (scan) (scan.dataset.studentScan === 'idle' ? idleBox : heroBox)(scan, false);
+  const table = root.querySelector('table.student-package-table');
+  if (table && once(root, 'studentScanTiles')) {
+    const rows = [...table.querySelectorAll('tbody > tr')];
+    const known = rows.filter(r => r.dataset.studentPackageStatus === 'known_vulnerabilities').length;
+    const unverifiable = rows.filter(r => !['known_vulnerabilities', 'none_found'].includes(r.dataset.studentPackageStatus)).length;
+    const g = grid(140); g.className = 'student-grid student-scan-tiles';
+    g.append(tile('조회한 패키지', `${rows.length}개`, null, 'ok'), tile('알려진 항목 있음', `${known}개`, null, known ? 'error' : 'ok'), tile('조회 확인 불가', `${unverifiable}개`, null, unverifiable ? 'empty' : 'ok'));
+    root.insertBefore(g, scan ? scan.nextSibling : table);
+  }
+  const footer = [...root.querySelectorAll(':scope > p.muted')].find(p => p.textContent.startsWith('OSV는'));
+  if (footer) Object.assign(footer.style, { fontWeight: '700', color: 'var(--text)' });
+  const lockNote = [...root.querySelectorAll(':scope > p.muted')].find(p => p.textContent.startsWith('버전은 package-lock'));
+  const summary = root.querySelector(':scope > dl.kv');
+  infoBox(root, 'scan', [source, summary, lockNote], 'ⓘ 자세히 (자료 출처 · lock 파일 · 조회 시각)');
+}
+
 export function createStudentView({ api, onChange } = {}) {
   const pcDashboard = createPcDashboard({ api, onChange });
+  const renderEvents = createEventsRenderer();
   return {
-    renderIdentity,
-    renderDecision,
-    renderEvents: createEventsRenderer(),
-    // 16단계 renderStatus 결과는 그대로 두고, 맨 위에 2일차 대시보드를 덧붙입니다.
+    renderIdentity: input => polishStudent(renderIdentity(input), presentIdentity),
+    renderDecision: input => polishStudent(renderDecision(input), presentDecision),
+    renderEvents: input => polishStudent(renderEvents(input), presentEvents),
+    // 16단계 renderStatus 결과는 그대로 두고(겉모습만 통일), 맨 위에 관제 대시보드를 덧붙입니다.
     renderStatus(input) {
-      const element = renderStatus(input);
+      const element = polishStudent(renderStatus(input), presentStatus16);
       element.prepend(pcDashboard.render());
       if (typeof queueMicrotask === 'function') queueMicrotask(() => pcDashboard.restoreFocus());
       return element;
     },
-    renderVulnerabilities,
-    renderAiConnection,
-    renderExplanation,
-    renderAction,
+    renderVulnerabilities: input => polishStudent(renderVulnerabilities(input), presentVulnerabilities),
+    renderAiConnection: input => polishStudent(renderAiConnection(input), presentAiConnection),
+    renderExplanation: input => polishStudent(renderExplanation(input), presentExplanation),
+    renderAction: input => polishStudent(renderAction(input), presentAction),
   };
 }
